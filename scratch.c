@@ -125,62 +125,200 @@ void rc_search(char* a){
 }
 
 
-
-char** get_tokens(char* input){
-    char * temp;
-    char** tok;
-    tok=(char**)malloc(64*sizeof(char*));
-    int i=0;
-    temp = strtok (input," ");
-    while (temp != NULL)
-    {  tok[i++]=temp;
-      // printf("%s\n",temp);
-       if(strcmp(temp,"|")==0){
-         piped++;
-       }
-       if(strcmp(temp,">")==0){
-         if(strcmp(tok[i-2],">")==0){
-             single_out--;
-             double_out++;
-         }
-         else single_out++;
-       }
-       temp = strtok (NULL, " ");
+char **get_tokens(char *input)
+{
+  char *temp;
+  char **tok;
+  tok = malloc(64 * sizeof(char *));
+  int i = 0;
+  temp = strtok(input, " ");
+  while (temp != NULL)
+  {
+    tok[i++] = temp;
+    // printf("%s\n",temp);
+    if (strcmp(temp, "|") == 0 || strcmp(temp, "<") == 0 || strcmp(temp, ">") == 0 || strcmp(temp, ">>") == 0)
+    {
+      piped++;
     }
-    return tok;
+    temp = strtok(NULL, " ");
+  }
+  return tok;
 }
 
-/*void runcmd_io(char** input){
-  int fd;
-  int pid;
-  int output;
-  pid = fork();
-//  output = open(input[1], O_WRONLY|O_CREAT|O_TRUNC, 0777);
-  /* if (output < 0)
-    {
-      printf("The opening of %s did not complete and has failed\n",input[1]);
-      exit(0);
-    }
-    if (dup2(output, fd) < 0) 
-    {
-      fprintf(stderr, "dup2 failed to execute\n");
-      exit(0);
-    }*/
- /*  fd = creat(input[1], 0644);
-    dup2(fd, 1);
-    //out = 0;
-    output = dup(1);
-    if (pid == 0) {       
-      execvp(input[0], input);
-      perror("execvp");
-      _exit(1);
-} else {
-    waitpid(pid, 0, 0);
-    dup2(input[1], 1);
-    free(res);
-}
-}*/
+char *replace_io_util(char * inputs, int token_id)
+{
+  int new_size = 4*strlen(inputs)*sizeof(char);
+  char *replaced = malloc(new_size);
 
+  switch (token_id)
+  {
+    case 1: 
+    {
+      char *read_io_redir = strstr(inputs, "<");
+      if (read_io_redir != NULL)
+      {
+        char *replaced_it = replaced;
+        strcat(replaced_it, "cat ");
+        replaced_it = replaced_it + 4;
+        char *file_name_it = read_io_redir + 1;
+        while(*file_name_it == ' ' && *file_name_it != '\0')
+          file_name_it++;
+
+        char *file_name_end = strstr(file_name_it, " ");
+        
+        while(*file_name_it != '\0' && file_name_it !=  file_name_end)
+        {
+          *(replaced_it++) = *(file_name_it++);
+        }
+
+        strcat(replaced_it, " | ");
+        replaced_it += 3;
+
+        char *input_it = inputs;
+        while(input_it != read_io_redir)
+        {
+          *(replaced_it++) = *(input_it++);
+        }
+
+        if (file_name_end != NULL)
+        {
+          char *right = file_name_end;
+          while(*right == ' ' && *right != '\0')
+            right++;
+
+          strcat(replaced_it, right);
+          replaced_it += strlen(right);
+
+        }
+        
+        *(replaced_it++) = '\0';
+      }
+      else
+      {
+        strcpy(replaced, inputs);
+      }
+      
+
+      break;
+    }
+
+    case 2:
+    {
+      char *read_io_redir = strstr(inputs, ">>");
+      char token[3];
+      strcpy(token, ">>");
+      if (read_io_redir == NULL)
+      {
+        read_io_redir = strstr(inputs, ">");
+        strcpy(token, ">");
+      }
+
+      if (read_io_redir != NULL)
+      {
+        char *replaced_it = replaced;
+
+        char *input_it = inputs;
+        while(input_it != read_io_redir)
+        {
+          *(replaced_it++) = *(input_it++);
+        }
+
+        char redirection_command[50];
+        strcpy(redirection_command, (strcmp(token, ">") == 0) ? "| write_redirection " : "| append_redirection ");
+        
+        strcat(replaced_it, redirection_command);
+        replaced_it += strlen(redirection_command);
+
+        char *file_name_it = read_io_redir + 1;
+        while((*file_name_it == '>' || *file_name_it == ' ') && *file_name_it != '\0')
+          file_name_it++;
+
+        char *file_name_end = strstr(file_name_it, " ");
+        
+        while(*file_name_it != '\0' && file_name_it !=  file_name_end)
+        {
+          *(replaced_it++) = *(file_name_it++);
+        }
+        
+        *(replaced_it++) = '\0';
+      }
+      else
+      {
+        strcpy(replaced, inputs);
+      }
+
+      break;
+    }
+  }
+
+  return replaced;
+}
+
+char *replace_io_redirection(char *inputs)
+{
+  // replace command1 < filename | command2 | .. | commandN _WITH_ cat filname | command | command2 | .. | commandN
+  char *replaced = replace_io_util(inputs, 1);
+  
+  // replace > or >> with | write_redirection
+  replaced = replace_io_util(replaced, 2);
+
+  // fprintf(stdout, "\n____replaced: %s____\n", replaced);
+
+  return replaced;
+}
+
+
+void write_fd_to_file(char *path, char *mode, int fd)
+{
+  int BUFFER_SIZE = 4096;
+  void *buffer = malloc(BUFFER_SIZE);
+  FILE *fp = fopen(path, mode);
+  if (fp == 0)
+  {
+    fprintf(stderr, "\nAn error occured while writing to file: %s, mode: %s\n", path, mode);
+  }
+
+  int bytes_read;
+  bytes_read = read(fd, buffer, 64);
+
+  while(bytes_read > 0)
+  {
+    fwrite(buffer, bytes_read, 1, fp);
+    bytes_read = read(fd, buffer, 64);
+  }
+
+  // int read;
+  // while((read = fread(content, BUFFER_SIZE, 1, stdin)))
+  // {
+  //   fwrite(content, read, 1, fp);
+  // }
+
+  // if (ferror(stdin))
+  //   fprintf(stderr, "\nAn error occured from stdin while writing to file: %s, mode: %s\n", path, mode);
+
+  fclose(fp);
+}
+
+void exec_pipe_cmd(char **input, char **cmd, int fd, int command_no)
+{
+  if (strcmp(cmd[0], "write_redirection") == 0)
+  {
+    write_fd_to_file(cmd[1], "w", fd);
+    close(fd);
+    exit(0);
+  }
+  else if (strcmp(cmd[0], "append_redirection") == 0)
+  {
+    write_fd_to_file(cmd[1], "a", fd);
+    close(fd);
+    exit(0);
+  }
+  else if (execvp(cmd[0], cmd) < 0)
+  {
+    fprintf(stderr, "\nCould not run command %d (%s)..\n", command_no, input[command_no-1]);
+    exit(0);
+  }
+}
 
 void runpipe_recursive(char ** input, int count, int fd[2])
 {
@@ -237,7 +375,7 @@ void runpipe_recursive(char ** input, int count, int fd[2])
         dup2(fd[1], 1);
       }
 
-      close(fd_2[0]);
+     // close(fd_2[0]);
       close(fd[1]);
         
       char **tok;
@@ -245,12 +383,13 @@ void runpipe_recursive(char ** input, int count, int fd[2])
 
       int status;
       wait(&status);
+      exec_pipe_cmd(input, tok, fd_2[0], count);      
 
-      if (execvp(tok[0], tok) < 0)
+     /* if (execvp(tok[0], tok) < 0)
       {
         fprintf(stderr, "\nCould not run command %d (%s)..\n", count, input[count-1]);
         exit(0);
-      }
+      }*/
     }    
   }
 }
@@ -262,31 +401,21 @@ void runcmd_pipe(char** input){
     runpipe_recursive(input, piped+1, fd);
 }
 
-char** get_redirectok(char* input){
-    char* temp;
-    char** tok;
-    tok = (char**)malloc(64*sizeof(char*));
-    int i=0;
-    temp = strtok (input,">");
-    while(temp!=NULL){
-      tok[i++]=temp;
-       temp = strtok (NULL, ">");
-    }
-    return tok;
-}
-
-
-char** get_pipetok(char* input){
-    char* temp;
-    char** tok;
-    tok = (char**)malloc(64*sizeof(char*));
-    int i=0;
-    temp = strtok (input,"|");
-    while(temp!=NULL){
-      tok[i++]=temp;
-       temp = strtok (NULL, "|");
-    }
-    return tok;
+char **get_pipetok(char *input)
+{
+  char *temp;
+  char **tok;
+  tok = malloc(64 * sizeof(char *));
+  int i = 0;
+  char *replaced_input = replace_io_redirection(input);
+  temp = strtok(replaced_input, "|");
+  while (temp != NULL)
+  {
+    tok[i++] = temp;
+    // printf("%s\n",temp);
+    temp = strtok(NULL, "|");
+  }
+  return tok;
 }
 
 
@@ -321,23 +450,27 @@ char* read_input(void){
 int main(){
   initialization();
   static char* input;
-  char* input_copy = (char*)malloc(2048*sizeof(char));
   int fd, r; 
   pid_t pid;
     while(1){
     printf("\n$:");
     input = read_input();
+
     if(input[0]=='$') rc_search(input);
+
     else if(strcmp(input,"history")==0) view_history();
+
     else{
-    strcpy(input_copy,input);
-    char** p;
-    p = get_tokens(input);
-   // if(strcmp(p[0],"alias")==0) run_alias(p);
-    if(strcmp(p[0],"exit")==0){
-      exit(0);
-      return 0;
-     }
+       int len = strlen(input);
+       char *input_copy = malloc(len * sizeof(char));
+       strcpy(input_copy,input);
+       char** p;
+       p = get_tokens(input);
+      // if(strcmp(p[0],"alias")==0) run_alias(p);
+       if(strcmp(p[0],"exit")==0){
+          exit(0);
+          return 0;
+       }
     pid = fork();
     if(pid < 0) printf("error in fork\n");
     if(pid==0){
